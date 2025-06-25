@@ -1,0 +1,123 @@
+# Model Configuration for LCF Group Funding Recommendation System
+
+model:
+  # Base model configuration
+  base_model: "distilbert-base-uncased"
+  model_type: "transformer"
+  
+  # LoRA (Low-Rank Adaptation) configuration
+  lora_config:
+    r: 16                    # Rank of the low-rank matrices
+    lora_alpha: 32           # Scaling factor for LoRA weights
+    target_modules: ["q_lin", "v_lin"]  # Target modules for LoRA
+    lora_dropout: 0.1        # Dropout probability for LoRA layers
+    bias: "none"             # Bias type: "none", "all", or "lora_only"
+    task_type: "SEQUENCE_CLASSIFICATION"
+    
+  # PEFT (Parameter-Efficient Fine-Tuning) configuration
+  peft_config:
+    inference_mode: false
+    peft_type: "LORA"
+    
+  # Training configuration
+  training:
+    learning_rate: 2e-4
+    batch_size: 16
+    epochs: 10
+    warmup_steps: 100
+    weight_decay: 0.01
+    gradient_accumulation_steps: 4
+    max_grad_norm: 1.0
+    save_steps: 500
+    eval_steps: 500
+    logging_steps: 100
+    
+  # Data configuration
+  data:
+    max_length: 512
+    truncation: true
+    padding: "max_length"
+    return_tensors: "pt"
+    
+  # Classification configuration
+  classification:
+    num_labels: 6  # 3 risk levels × 2 funding decisions
+    problem_type: "multi_label_classification"
+    
+    # Risk levels
+    risk_labels: ["low", "medium", "high"]
+    risk_mapping:
+      0: "low"
+      1: "medium" 
+      2: "high"
+    
+    # Funding recommendations
+    funding_labels: ["yes", "no", "maybe"]
+    funding_mapping:
+      0: "yes"
+      1: "no"
+      2: "maybe"
+    
+  # Feature configuration
+  features:
+    numerical_features:
+      - "revenue"
+      - "revenue_log"
+      - "employee_count"
+      - "employee_count_log"
+      - "years_active"
+      - "past_funding"
+      - "past_funding_log"
+      - "revenue_per_employee"
+      - "funding_to_revenue_ratio"
+    
+    categorical_features:
+      - "domain_encoded"
+      - "location_encoded"
+    
+    text_features:
+      - "text_length"
+      - "word_count"
+      - "sentence_count"
+      - "avg_word_length"
+      - "vocabulary_richness"
+    
+  # Model paths and storage
+  paths:
+    model_dir: "models"
+    lora_model_dir: "models/lora_finetuned"
+    base_model_cache: "models/cache"
+    checkpoints_dir: "models/checkpoints"
+    
+  # Evaluation configuration
+  evaluation:
+    metrics: ["accuracy", "precision", "recall", "f1", "roc_auc"]
+    validation_split: 0.2
+    test_split: 0.1
+    random_state: 42
+    
+  # Inference configuration
+  inference:
+    batch_size: 1
+    device: "auto"  # "cpu", "cuda", or "auto"
+    use_fp16: false
+    temperature: 1.0
+    
+  # Logging and monitoring
+  logging:
+    log_level: "INFO"
+    log_file: "logs/model_training.log"
+    tensorboard_dir: "logs/tensorboard"
+    
+  # AWS S3 configuration (for model storage)
+  aws:
+    s3_bucket: "lcf-funding-models"
+    s3_prefix: "models"
+    region: "us-east-1"
+    
+  # Model versioning
+  version:
+    major: 1
+    minor: 0
+    patch: 0
+    description: "Initial LoRA fine-tuned model for funding recommendations" 
