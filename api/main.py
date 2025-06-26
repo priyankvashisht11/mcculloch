@@ -23,8 +23,8 @@ from loguru import logger
 
 # Import our modules
 from model.infer import FundingInference, FundingAnalyzer
-from elasticsearch.search import BusinessSearch
-from elasticsearch.setup_index import ElasticsearchSetup
+from es_utils.search import BusinessSearch
+from es_utils.setup_index import ElasticsearchSetup
 from preprocessing.clean_and_embed import BusinessPreprocessor
 
 
