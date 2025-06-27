@@ -16,19 +16,11 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForSequenceClassification,
-    TrainingArguments,
-    Trainer,
-    EarlyStoppingCallback
-)
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    TaskType,
-    PeftModel
-)
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers.training_args import TrainingArguments
+from transformers.trainer import Trainer
+from transformers.trainer_callback import EarlyStoppingCallback
+from peft import LoraConfig, TaskType, get_peft_model
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
@@ -38,51 +30,58 @@ import boto3
 from botocore.exceptions import ClientError
 import wandb
 from loguru import logger
+import transformers
 
 # Configure logging
 logger.add("logs/training.log", rotation="10 MB", level="INFO")
 
+print("TrainingArguments source:", TrainingArguments.__module__)
 
-class FundingDataset(Dataset):
+class FundingDataset(torch.utils.data.Dataset):
     """Custom dataset for funding recommendation data"""
     
     def __init__(self, texts: List[str], features: List[Dict], labels: List[List[int]], tokenizer, max_length: int = 512):
         self.texts = texts
-        self.features = features
+        self._features = features
         self.labels = labels
         self.tokenizer = tokenizer
         self.max_length = max_length
+        
+        # Create the dataset structure that Trainer expects
+        self.data = []
+        for i in range(len(texts)):
+            text = texts[i]
+            feature_dict = features[i]
+            label = labels[i]
+            
+            # Tokenize text
+            encoding = self.tokenizer(
+                text,
+                truncation=True,
+                padding='max_length',
+                max_length=max_length,
+                return_tensors='pt'
+            )
+            
+            # Create item
+            item = {
+                'input_ids': encoding['input_ids'].flatten(),
+                'attention_mask': encoding['attention_mask'].flatten(),
+                'labels': torch.tensor(label, dtype=torch.float32)
+            }
+            
+            # Add numerical features
+            for key, value in feature_dict.items():
+                if isinstance(value, (int, float)):
+                    item[f'feature_{key}'] = torch.tensor(value, dtype=torch.float32)
+            
+            self.data.append(item)
     
     def __len__(self):
-        return len(self.texts)
+        return len(self.data)
     
     def __getitem__(self, idx):
-        text = self.texts[idx]
-        feature_dict = self.features[idx]
-        label = self.labels[idx]
-        
-        # Tokenize text
-        encoding = self.tokenizer(
-            text,
-            truncation=True,
-            padding='max_length',
-            max_length=self.max_length,
-            return_tensors='pt'
-        )
-        
-        # Flatten encoding
-        item = {
-            'input_ids': encoding['input_ids'].flatten(),
-            'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(label, dtype=torch.float32)
-        }
-        
-        # Add numerical features
-        for key, value in feature_dict.items():
-            if isinstance(value, (int, float)):
-                item[f'feature_{key}'] = torch.tensor(value, dtype=torch.float32)
-        
-        return item
+        return self.data[idx]
 
 
 class FundingModel:
@@ -152,6 +151,9 @@ class FundingModel:
     
     def _create_peft_model(self):
         """Create PEFT model with LoRA"""
+        if self.model is None:
+            raise ValueError("Base model must be loaded before creating PEFT model")
+            
         lora_config = self._setup_lora_config()
         
         try:
@@ -238,7 +240,7 @@ class FundingModel:
         else:
             return 1  # No
     
-    def _create_datasets(self, texts: List[str], features: List[Dict], labels: List[List[int]]) -> Tuple[Dataset, Dataset]:
+    def _create_datasets(self, texts: List[str], features: List[Dict], labels: List[List[int]]) -> Tuple[FundingDataset, FundingDataset]:
         """Create training and validation datasets"""
         # Split data
         train_texts, val_texts, train_features, val_features, train_labels, val_labels = train_test_split(
@@ -306,25 +308,27 @@ class FundingModel:
             train_dataset, val_dataset = self._create_datasets(texts, features, labels)
             
             # Setup training arguments
+            learning_rate = self.config['model']['training']['learning_rate']
+            logger.info(f"Learning rate: {learning_rate} (type: {type(learning_rate)})")
+            
             training_args = TrainingArguments(
                 output_dir=output_dir,
-                learning_rate=self.config['model']['training']['learning_rate'],
-                per_device_train_batch_size=self.config['model']['training']['batch_size'],
-                per_device_eval_batch_size=self.config['model']['training']['batch_size'],
                 num_train_epochs=self.config['model']['training']['epochs'],
+                per_device_train_batch_size=self.config['model']['training']['batch_size'],
+                per_device_eval_batch_size=self.config['model']['inference']['batch_size'],
+                learning_rate=float(learning_rate),
                 weight_decay=self.config['model']['training']['weight_decay'],
-                logging_dir=f"{output_dir}/logs",
+                logging_dir=self.config['model']['logging']['tensorboard_dir'],
                 logging_steps=self.config['model']['training']['logging_steps'],
-                evaluation_strategy="steps",
-                eval_steps=self.config['model']['training']['eval_steps'],
                 save_steps=self.config['model']['training']['save_steps'],
+                eval_steps=self.config['model']['training']['eval_steps'],
+                save_total_limit=2,
+                eval_strategy="steps",
+                save_strategy="steps",
                 load_best_model_at_end=True,
-                metric_for_best_model="f1",
-                greater_is_better=True,
-                warmup_steps=self.config['model']['training']['warmup_steps'],
-                gradient_accumulation_steps=self.config['model']['training']['gradient_accumulation_steps'],
-                max_grad_norm=self.config['model']['training']['max_grad_norm'],
-                report_to="wandb" if os.getenv("WANDB_API_KEY") else None,
+                metric_for_best_model='eval_loss',
+                greater_is_better=False,
+                report_to=["wandb"],
             )
             
             # Initialize trainer
@@ -343,7 +347,8 @@ class FundingModel:
             
             # Save model
             trainer.save_model()
-            self.tokenizer.save_pretrained(output_dir)
+            if self.tokenizer is not None:
+                self.tokenizer.save_pretrained(output_dir)
             
             # Save configuration
             config_save_path = os.path.join(output_dir, "model_config.json")
@@ -370,6 +375,9 @@ class FundingModel:
                 s3_bucket = self.config['model']['aws']['s3_bucket']
             if not s3_prefix:
                 s3_prefix = self.config['model']['aws']['s3_prefix']
+            
+            if not s3_bucket or not s3_prefix:
+                raise ValueError("S3 bucket and prefix must be provided either as parameters or in config")
             
             s3_client = boto3.client('s3')
             

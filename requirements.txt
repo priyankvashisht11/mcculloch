@@ -59,4 +59,7 @@ passlib>=1.7.4
 
 # Optional: Jupyter for development
 jupyter>=1.0.0
-ipykernel>=6.25.0 
+ipykernel>=6.25.0
+
+# Add wandb for experiment tracking
+wandb 

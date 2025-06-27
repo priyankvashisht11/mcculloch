@@ -23,7 +23,12 @@ class FundingInference:
     """Inference class for funding recommendations"""
     
     def __init__(self, model_path: str = "models/lora_finetuned", config_path: str = "model/config/model_config.yaml"):
-        self.model_path = model_path
+        # Ensure model_path is absolute within the container
+        if not model_path.startswith('/'):
+            self.model_path = f"/app/{model_path}"
+        else:
+            self.model_path = model_path
+            
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,7 +37,7 @@ class FundingInference:
         self.peft_model = None
         
         logger.info(f"Using device: {self.device}")
-        logger.info(f"Model path: {model_path}")
+        logger.info(f"Model path: {self.model_path}")
     
     def _load_config(self, config_path: str) -> Dict:
         """Load model configuration"""
@@ -48,7 +53,7 @@ class FundingInference:
         """Load the trained model and tokenizer"""
         try:
             # Load tokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, local_files_only=True)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             
@@ -60,7 +65,7 @@ class FundingInference:
             )
             
             # Load PEFT model
-            self.peft_model = PeftModel.from_pretrained(self.model, self.model_path)
+            self.peft_model = PeftModel.from_pretrained(self.model, self.model_path, local_files_only=True)
             self.peft_model.eval()
             
             # Move to device
@@ -277,8 +282,18 @@ class FundingAnalyzer:
     """High-level analyzer for funding recommendations"""
     
     def __init__(self, model_path: str = "models/lora_finetuned"):
-        self.inference = FundingInference(model_path)
-        self.inference.load_model()
+        # Ensure model_path is absolute within the container
+        if not model_path.startswith('/'):
+            absolute_model_path = f"/app/{model_path}"
+        else:
+            absolute_model_path = model_path
+            
+        self.inference = FundingInference(model_path=absolute_model_path)
+        try:
+            self.inference.load_model()
+        except Exception as e:
+            logger.error(f"Failed to load model during initialization: {e}")
+            raise
     
     def analyze_business(self, business_data: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze a business and provide comprehensive recommendations"""
