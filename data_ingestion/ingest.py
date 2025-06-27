@@ -248,14 +248,14 @@ class DataIngestion:
                 import re
                 numbers = re.findall(r'\$?[\d,]+(?:\.\d{2})?', line)
                 if numbers:
-                    profile_data["revenue"] = float(numbers[0].replace('$', '').replace(',', ''))
+                    profile_data["revenue"] = str(float(numbers[0].replace('$', '').replace(',', '')))
             
             # Extract employee count
             if any(word in line.lower() for word in ['employees', 'staff', 'team']):
                 import re
                 numbers = re.findall(r'\d+', line)
                 if numbers:
-                    profile_data["employee_count"] = int(numbers[0])
+                    profile_data["employee_count"] = str(int(numbers[0]))
         
         return profile_data
     

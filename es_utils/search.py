@@ -38,13 +38,13 @@ class BusinessSearch:
         # Initialize Elasticsearch client
         if username and password:
             self.es = Elasticsearch(
-                [f"{host}:{port}"],
+                [f"http://{host}:{port}"],
                 basic_auth=(username, password),
                 verify_certs=False,
                 ssl_show_warn=False
             )
         else:
-            self.es = Elasticsearch([f"{host}:{port}"])
+            self.es = Elasticsearch([f"http://{host}:{port}"])
         
         # Initialize embedding model
         self.embedding_model = SentenceTransformer(embedding_model)

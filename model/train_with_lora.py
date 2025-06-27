@@ -7,30 +7,28 @@ a transformer model for business funding recommendations.
 
 import os
 import json
-import logging
-import argparse
-from typing import Dict, List, Optional, Any, Tuple
-from pathlib import Path
 import yaml
-import numpy as np
-import pandas as pd
+import argparse
+import boto3
 import torch
-from torch.utils.data import Dataset, DataLoader
+import numpy as np
+from typing import Dict, List, Tuple, Any, Optional
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_recall_fscore_support, accuracy_score, roc_auc_score
+from botocore.exceptions import ClientError
+
+# Transformers imports
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers.utils.quantization_config import BitsAndBytesConfig
 from transformers.training_args import TrainingArguments
 from transformers.trainer import Trainer
 from transformers.trainer_callback import EarlyStoppingCallback
+
+# PEFT imports
 from peft import LoraConfig, TaskType, get_peft_model
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, roc_auc_score
-import datasets
-from datasets import Dataset
-import boto3
-from botocore.exceptions import ClientError
-import wandb
+
+# Logging
 from loguru import logger
-import transformers
 
 # Configure logging
 logger.add("logs/training.log", rotation="10 MB", level="INFO")
@@ -112,7 +110,6 @@ class FundingModel:
         model_name = self.config['model']['base_model']
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            # Add padding token if not present
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             logger.info(f"Loaded tokenizer: {model_name}")
@@ -124,12 +121,13 @@ class FundingModel:
         """Load base transformer model"""
         model_name = self.config['model']['base_model']
         num_labels = self.config['model']['classification']['num_labels']
-        
         try:
+            bnb_config = BitsAndBytesConfig(load_in_8bit=True)
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name,
                 num_labels=num_labels,
-                problem_type="multi_label_classification"
+                problem_type="multi_label_classification",
+                quantization_config=bnb_config
             )
             logger.info(f"Loaded base model: {model_name}")
         except Exception as e:
@@ -368,7 +366,7 @@ class FundingModel:
             logger.error(f"Error during training: {e}")
             raise
     
-    def save_to_s3(self, local_path: str, s3_bucket: str = None, s3_prefix: str = None):
+    def save_to_s3(self, local_path: str, s3_bucket: Optional[str] = None, s3_prefix: Optional[str] = None):
         """Save model to S3"""
         try:
             if not s3_bucket:

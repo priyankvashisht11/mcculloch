@@ -2,14 +2,14 @@
 
 model:
   # Base model configuration
-  base_model: "distilbert-base-uncased"
-  model_type: "transformer"
+  base_model: "mistralai/Mistral-7B-Instruct-v0.2"
+  model_type: "mistral"
   
   # LoRA (Low-Rank Adaptation) configuration
   lora_config:
     r: 16                    # Rank of the low-rank matrices
     lora_alpha: 32           # Scaling factor for LoRA weights
-    target_modules: ["q_lin", "v_lin"]  # Target modules for LoRA
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]  # Target modules for LoRA
     lora_dropout: 0.1        # Dropout probability for LoRA layers
     bias: "none"             # Bias type: "none", "all", or "lora_only"
     task_type: "SEQUENCE_CLASSIFICATION"
@@ -22,7 +22,7 @@ model:
   # Training configuration
   training:
     learning_rate: 2e-4
-    batch_size: 16
+    batch_size: 1
     epochs: 10
     warmup_steps: 100
     weight_decay: 0.01
@@ -34,7 +34,7 @@ model:
     
   # Data configuration
   data:
-    max_length: 512
+    max_length: 1024
     truncation: true
     padding: "max_length"
     return_tensors: "pt"

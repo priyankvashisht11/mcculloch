@@ -38,13 +38,13 @@ class ElasticsearchSetup:
         # Initialize Elasticsearch client
         if username and password:
             self.es = Elasticsearch(
-                [f"{host}:{port}"],
+                [f"http://{host}:{port}"],
                 basic_auth=(username, password),
-                verify_certs=False if use_ssl else None,
-                ssl_show_warn=False if use_ssl else None
+                verify_certs=False,
+                ssl_show_warn=False
             )
         else:
-            self.es = Elasticsearch([f"{host}:{port}"])
+            self.es = Elasticsearch([f"http://{host}:{port}"])
         
         # Index configuration
         self.index_name = "lcf_businesses"

@@ -12,11 +12,13 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import yaml
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, LlamaForSequenceClassification
 from peft import PeftModel, PeftConfig
 from loguru import logger
 import boto3
 from botocore.exceptions import ClientError
+import pandas as pd
+from transformers.utils.quantization_config import BitsAndBytesConfig
 
 
 class FundingInference:
@@ -52,27 +54,19 @@ class FundingInference:
     def load_model(self):
         """Load the trained model and tokenizer"""
         try:
-            # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, local_files_only=True)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-            # Load base model
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 self.config['model']['base_model'],
                 num_labels=self.config['model']['classification']['num_labels'],
-                problem_type="multi_label_classification"
+                problem_type="multi_label_classification",
+                local_files_only=True
             )
-            
-            # Load PEFT model
             self.peft_model = PeftModel.from_pretrained(self.model, self.model_path, local_files_only=True)
             self.peft_model.eval()
-            
-            # Move to device
             self.peft_model.to(self.device)
-            
             logger.info("Model loaded successfully")
-            
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             raise
@@ -117,6 +111,8 @@ class FundingInference:
     def preprocess_input(self, business_data: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """Preprocess input data for inference"""
         try:
+            if self.tokenizer is None:
+                raise RuntimeError("Tokenizer is not loaded. Call load_model() before preprocessing input.")
             # Extract text description
             description = business_data.get('description', '')
             if not description:
@@ -147,6 +143,8 @@ class FundingInference:
     def predict(self, business_data: Dict[str, Any]) -> Dict[str, Any]:
         """Make prediction for a business"""
         try:
+            if self.peft_model is None:
+                raise RuntimeError("PEFT model is not loaded. Call load_model() before prediction.")
             # Preprocess input
             inputs = self.preprocess_input(business_data)
             
