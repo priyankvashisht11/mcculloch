@@ -87,7 +87,7 @@ class FundingModel:
     
     def __init__(self, config_path: str = "model/config/model_config.yaml"):
         self.config = self._load_config(config_path)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")  # Force CPU
         self.tokenizer = None
         self.model = None
         self.peft_model = None
@@ -122,14 +122,41 @@ class FundingModel:
         model_name = self.config['model']['base_model']
         num_labels = self.config['model']['classification']['num_labels']
         try:
-            bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                model_name,
-                num_labels=num_labels,
-                problem_type="multi_label_classification",
-                quantization_config=bnb_config
-            )
-            logger.info(f"Loaded base model: {model_name}")
+            if self.device.type == "cuda":
+                try:
+                    from transformers.utils.quantization_config import BitsAndBytesConfig
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        bnb_4bit_compute_dtype=torch.float16
+                    )
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        model_name,
+                        num_labels=num_labels,
+                        problem_type="multi_label_classification",
+                        quantization_config=bnb_config,
+                        device_map="auto",
+                        torch_dtype=torch.float16
+                    )
+                    logger.info(f"Loaded base model with 8-bit quantization: {model_name}")
+                except Exception as quant_error:
+                    logger.warning(f"Quantization failed, trying without: {quant_error}")
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        model_name,
+                        num_labels=num_labels,
+                        problem_type="multi_label_classification",
+                        device_map="auto",
+                        torch_dtype=torch.float16
+                    )
+                    logger.info(f"Loaded base model without quantization: {model_name}")
+            else:
+                self.model = AutoModelForSequenceClassification.from_pretrained(
+                    model_name,
+                    num_labels=num_labels,
+                    problem_type="multi_label_classification",
+                    device_map={"": "cpu"},
+                    torch_dtype=torch.float32
+                )
+                logger.info(f"Loaded base model on CPU: {model_name}")
         except Exception as e:
             logger.error(f"Error loading base model: {e}")
             raise

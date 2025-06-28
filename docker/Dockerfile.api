@@ -1,6 +1,6 @@
 # Dockerfile for LCF Group Funding Recommendation API
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
@@ -23,12 +23,17 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Patch llama_stack to remove invalid punkt_tab download
+RUN sed -i '/nltk.download("punkt_tab")/d' /usr/local/lib/python3.11/site-packages/llama_stack/providers/inline/scoring/basic/utils/ifeval_utils.py || true
+
 # Install spaCy model
 RUN python -m spacy download en_core_web_sm
-RUN python -m nltk.downloader all
 
 # Copy application code
-COPY . .
+COPY api/ ./api/
+COPY model/ ./model/
+COPY es_utils/ ./es_utils/
+COPY preprocessing/ ./preprocessing/
 
 # Create necessary directories
 RUN mkdir -p logs models data/processed data/preprocessed predictions

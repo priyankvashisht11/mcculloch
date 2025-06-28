@@ -16,9 +16,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import time
+import os
 
 # Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # Page configuration
 st.set_page_config(
@@ -163,7 +164,15 @@ def show_dashboard():
             st.metric("Device", model_info.get('device', 'Unknown'))
         
         with col4:
-            st.metric("Parameters", f"{model_info.get('total_parameters', 0):,}")
+            total_params = model_info.get('total_parameters', 0)
+            # Handle different data types and None values
+            if total_params is None:
+                total_params = 0
+            try:
+                total_params = int(float(total_params))
+                st.metric("Parameters", f"{total_params:,}")
+            except (ValueError, TypeError):
+                st.metric("Parameters", "N/A")
     
     # Quick analysis section
     st.subheader("🚀 Quick Business Analysis")
@@ -204,7 +213,7 @@ def show_dashboard():
                 if success:
                     st.session_state.analysis_results = result
                     st.success("Analysis completed successfully!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(f"Analysis failed: {result}")
 
@@ -396,7 +405,13 @@ def show_search_similar():
                                             st.markdown("**Key Features:**")
                                             for key, value in features.items():
                                                 if isinstance(value, (int, float)):
-                                                    st.markdown(f"- {key}: {value:,}")
+                                                    try:
+                                                        formatted_value = f"{value:,}"
+                                                        st.markdown(f"- {key}: {formatted_value}")
+                                                    except (ValueError, TypeError):
+                                                        st.markdown(f"- {key}: {value}")
+                                                else:
+                                                    st.markdown(f"- {key}: {value}")
                     else:
                         st.info("No similar businesses found.")
                 else:
@@ -418,8 +433,8 @@ def show_system_info():
                 "Base Model": model_info.get("base_model"),
                 "Device": model_info.get("device"),
                 "Max Length": model_info.get("max_length"),
-                "Total Parameters": f"{model_info.get('total_parameters', 0):,}",
-                "Trainable Parameters": f"{model_info.get('trainable_parameters', 0):,}"
+                "Total Parameters": str(model_info.get('total_parameters', 0) or 0),
+                "Trainable Parameters": str(model_info.get('trainable_parameters', 0) or 0)
             })
         
         with col2:

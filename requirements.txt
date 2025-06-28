@@ -26,7 +26,6 @@ pypdf2>=3.0.0
 openpyxl>=3.1.0
 python-docx>=0.8.11
 beautifulsoup4>=4.12.0
-nltk>=3.8.0
 spacy>=3.6.0
 
 # AWS Integration
@@ -64,4 +63,5 @@ jupyter>=1.0.0
 ipykernel>=6.25.0
 
 # Add wandb for experiment tracking
-wandb 
+wandb
+llama_stack==0.2.11 

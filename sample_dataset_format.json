@@ -1,0 +1,56 @@
+[
+  {
+    "cleaned_description": "A tech startup providing cloud solutions for enterprise clients. We specialize in AI-powered data analytics and have been in business for 5 years.",
+    "features": {
+      "revenue": 2500000,
+      "employee_count": 45,
+      "years_active": 5,
+      "revenue_per_employee": 55555,
+      "past_funding": 500000,
+      "funding_to_revenue_ratio": 0.2,
+      "domain_encoded": 1,
+      "location_encoded": 2,
+      "text_length": 156,
+      "word_count": 25,
+      "sentence_count": 3,
+      "avg_word_length": 4.8,
+      "vocabulary_richness": 0.85
+    }
+  },
+  {
+    "cleaned_description": "Local bakery specializing in artisan bread and pastries. Family-owned business with 3 employees.",
+    "features": {
+      "revenue": 180000,
+      "employee_count": 3,
+      "years_active": 2,
+      "revenue_per_employee": 60000,
+      "past_funding": 0,
+      "funding_to_revenue_ratio": 0.0,
+      "domain_encoded": 0,
+      "location_encoded": 1,
+      "text_length": 89,
+      "word_count": 15,
+      "sentence_count": 2,
+      "avg_word_length": 4.2,
+      "vocabulary_richness": 0.73
+    }
+  },
+  {
+    "cleaned_description": "Manufacturing company producing automotive parts. Established in 1995 with 200 employees and strong market presence.",
+    "features": {
+      "revenue": 15000000,
+      "employee_count": 200,
+      "years_active": 28,
+      "revenue_per_employee": 75000,
+      "past_funding": 2000000,
+      "funding_to_revenue_ratio": 0.13,
+      "domain_encoded": 2,
+      "location_encoded": 3,
+      "text_length": 134,
+      "word_count": 22,
+      "sentence_count": 2,
+      "avg_word_length": 5.1,
+      "vocabulary_richness": 0.82
+    }
+  }
+] 

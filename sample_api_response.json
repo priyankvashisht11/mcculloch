@@ -1,0 +1,46 @@
+{
+  "business_name": "TechCloud Solutions Inc",
+  "risk_assessment": {
+    "level": "medium",
+    "confidence": 0.78,
+    "probabilities": {
+      "low": 0.15,
+      "medium": 0.78,
+      "high": 0.07
+    }
+  },
+  "funding_recommendation": {
+    "decision": "yes",
+    "confidence": 0.82,
+    "probabilities": {
+      "yes": 0.82,
+      "no": 0.08,
+      "maybe": 0.10
+    }
+  },
+  "overall_confidence": 0.80,
+  "model_version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0,
+    "description": "Initial LoRA fine-tuned model for funding recommendations"
+  },
+  "analysis": {
+    "key_factors": [
+      "High-growth technology sector",
+      "Growing team size"
+    ],
+    "strengths": [
+      "Strong revenue generation",
+      "Established team structure"
+    ],
+    "concerns": [],
+    "market_position": "established"
+  },
+  "timestamp": "2025-06-28 17:15:30.123456",
+  "recommendations": [
+    "Proceed with funding application",
+    "Prepare detailed business plan",
+    "Highlight technological innovation and IP"
+  ]
+} 

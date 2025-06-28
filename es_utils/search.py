@@ -551,7 +551,12 @@ def main():
             limit=5
         )
         for i, result in enumerate(results['results'], 1):
-            print(f"{i}. {result['business_name']} - Revenue: ${result['features'].get('revenue', 0):,}")
+            revenue = result['features'].get('revenue', 0)
+            try:
+                formatted_revenue = f"${revenue:,}"
+                print(f"{i}. {result['business_name']} - Revenue: {formatted_revenue}")
+            except (ValueError, TypeError):
+                print(f"{i}. {result['business_name']} - Revenue: ${revenue}")
         
         # Get aggregations
         print("\n=== Domain Aggregations ===")

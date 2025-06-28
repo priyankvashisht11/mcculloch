@@ -17,34 +17,22 @@ import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import spacy
-from nltk.tokenize import word_tokenize, sent_tokenize
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-import nltk
+from spacy.lang.en.stop_words import STOP_WORDS
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from pydantic import BaseModel, Field
 import pickle
-
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
-
-try:
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('wordnet')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+nlp = spacy.load("en_core_web_sm")
+
+def sent_tokenize(text):
+    return [sent.text for sent in nlp(text).sents]
+
+def word_tokenize(text):
+    return [token.text for token in nlp(text)]
 
 class PreprocessedBusiness(BaseModel):
     """Pydantic model for preprocessed business data"""
@@ -69,8 +57,8 @@ class TextCleaner:
     """Text cleaning and normalization utilities"""
     
     def __init__(self):
-        self.stop_words = set(stopwords.words('english'))
-        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(STOP_WORDS)
+        # No need for a separate lemmatizer; use spaCy's token.lemma_
         
     def clean_text(self, text: str) -> str:
         """Clean and normalize text"""
@@ -88,11 +76,11 @@ class TextCleaner:
         # text = re.sub(r'\d+', '', text)
         
         # Tokenize and remove stop words
-        tokens = word_tokenize(text)
-        tokens = [token for token in tokens if token not in self.stop_words]
+        tokens = [token for token in nlp(text)]
+        tokens = [token for token in tokens if token.text not in self.stop_words]
         
         # Lemmatization
-        tokens = [self.lemmatizer.lemmatize(token) for token in tokens]
+        tokens = [token.lemma_ for token in tokens]
         
         return ' '.join(tokens)
     

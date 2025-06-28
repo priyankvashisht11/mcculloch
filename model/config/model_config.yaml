@@ -23,14 +23,14 @@ model:
   training:
     learning_rate: 2e-4
     batch_size: 1
-    epochs: 10
-    warmup_steps: 100
+    epochs: 1
+    warmup_steps: 10
     weight_decay: 0.01
-    gradient_accumulation_steps: 4
+    gradient_accumulation_steps: 2
     max_grad_norm: 1.0
-    save_steps: 500
-    eval_steps: 500
-    logging_steps: 100
+    save_steps: 10
+    eval_steps: 10
+    logging_steps: 5
     
   # Data configuration
   data:

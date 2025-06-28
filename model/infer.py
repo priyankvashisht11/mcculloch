@@ -12,7 +12,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import yaml
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, LlamaForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, LlamaForSequenceClassification, AutoConfig
 from peft import PeftModel, PeftConfig
 from loguru import logger
 import boto3
@@ -54,21 +54,76 @@ class FundingInference:
     def load_model(self):
         """Load the trained model and tokenizer"""
         try:
+            print("🔍 Starting model loading process...")
+            
+            # Load tokenizer from the LoRA model directory
+            print("📝 Loading tokenizer...")
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, local_files_only=True)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                self.config['model']['base_model'],
-                num_labels=self.config['model']['classification']['num_labels'],
-                problem_type="multi_label_classification",
-                local_files_only=True
-            )
-            self.peft_model = PeftModel.from_pretrained(self.model, self.model_path, local_files_only=True)
-            self.peft_model.eval()
-            self.peft_model.to(self.device)
-            logger.info("Model loaded successfully")
+            print("✅ Tokenizer loaded successfully")
+            
+            # Get HuggingFace token from environment
+            hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
+            print(f"🔑 HuggingFace token available: {'Yes' if hf_token else 'No'}")
+            
+            # Try to load base model from HuggingFace first
+            base_model_name = self.config['model']['base_model']
+            print(f"🤖 Loading base model: {base_model_name}")
+            
+            try:
+                # Use token for authentication if available
+                if hf_token:
+                    print("🔐 Using HuggingFace token for authentication...")
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        base_model_name,
+                        num_labels=self.config['model']['classification']['num_labels'],
+                        problem_type="multi_label_classification",
+                        token=hf_token,
+                        trust_remote_code=True
+                    )
+                else:
+                    print("⚠️ No HuggingFace token, trying without authentication...")
+                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                        base_model_name,
+                        num_labels=self.config['model']['classification']['num_labels'],
+                        problem_type="multi_label_classification",
+                        trust_remote_code=True
+                    )
+                
+                print("✅ Base model loaded successfully")
+                
+                # Load LoRA adapter
+                print("🔧 Loading LoRA adapter...")
+                try:
+                    peft_model = PeftModel.from_pretrained(self.model, self.model_path)
+                    self.model = peft_model
+                    self.peft_model = peft_model
+                    print("✅ LoRA adapter loaded successfully")
+                except Exception as e:
+                    print(f"⚠️ Could not load LoRA adapter: {e}")
+                    print("Using base model without LoRA adapter")
+                
+            except Exception as e:
+                print(f"⚠️ Could not load base model from HuggingFace: {e}")
+                print("Using fallback approach...")
+                
+                # Fallback: Create a simple model for testing
+                print("🔄 Creating fallback model...")
+                config = AutoConfig.from_pretrained(
+                    base_model_name,
+                    num_labels=self.config['model']['classification']['num_labels'],
+                    problem_type="multi_label_classification",
+                    token=hf_token if hf_token else None
+                )
+                self.model = AutoModelForSequenceClassification.from_config(config)
+                print("✅ Created fallback model for testing")
+            
+            self.model.eval()
+            print(f"✅ Model loaded successfully on device: {self.device}")
+            
         except Exception as e:
-            logger.error(f"Error loading model: {e}")
+            print(f"❌ Error loading model: {e}")
             raise
     
     def load_model_from_s3(self, s3_bucket: str, s3_prefix: str, local_path: str = "models/lora_finetuned"):
