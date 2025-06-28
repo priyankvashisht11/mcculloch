@@ -99,7 +99,7 @@ model:
   # Inference configuration
   inference:
     batch_size: 1
-    device: "auto"  # "cpu", "cuda", or "auto"
+    device: "cpu"  # "cpu", "cuda", or "auto"
     use_fp16: false
     temperature: 1.0
     

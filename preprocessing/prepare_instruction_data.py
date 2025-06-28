@@ -1,6 +1,6 @@
 import json
 
-INPUT_PATH = "data/preprocessed/sample_businesses.json"
+INPUT_PATH = "data/preprocessed/sample_businesses.jsonl"
 OUTPUT_PATH = "data/preprocessed/mistral_instruction_data.jsonl"
 
 # Format for Mistral instruction tuning

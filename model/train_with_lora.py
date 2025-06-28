@@ -6,11 +6,18 @@ a transformer model for business funding recommendations.
 """
 
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+import torch
+
+torch_device = "cpu"
+if torch.cuda.is_available():
+    torch_device = "cuda"
+# Force everything to CPU
+torch_device = "cpu"
 import json
 import yaml
 import argparse
 import boto3
-import torch
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional
 from sklearn.model_selection import train_test_split
@@ -18,7 +25,7 @@ from sklearn.metrics import precision_recall_fscore_support, accuracy_score, roc
 from botocore.exceptions import ClientError
 
 # Transformers imports
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers.utils.quantization_config import BitsAndBytesConfig
 from transformers.training_args import TrainingArguments
 from transformers.trainer import Trainer
@@ -35,52 +42,38 @@ logger.add("logs/training.log", rotation="10 MB", level="INFO")
 
 print("TrainingArguments source:", TrainingArguments.__module__)
 
-class FundingDataset(torch.utils.data.Dataset):
-    """Custom dataset for funding recommendation data"""
-    
-    def __init__(self, texts: List[str], features: List[Dict], labels: List[List[int]], tokenizer, max_length: int = 512):
-        self.texts = texts
-        self._features = features
-        self.labels = labels
+class TextGenDataset(torch.utils.data.Dataset):
+    def __init__(self, prompts, responses, tokenizer, max_length=1024):
+        self.prompts = prompts
+        self.responses = responses
         self.tokenizer = tokenizer
         self.max_length = max_length
-        
-        # Create the dataset structure that Trainer expects
-        self.data = []
-        for i in range(len(texts)):
-            text = texts[i]
-            feature_dict = features[i]
-            label = labels[i]
-            
-            # Tokenize text
-            encoding = self.tokenizer(
-                text,
-                truncation=True,
-                padding='max_length',
-                max_length=max_length,
-                return_tensors='pt'
-            )
-            
-            # Create item
-            item = {
-                'input_ids': encoding['input_ids'].flatten(),
-                'attention_mask': encoding['attention_mask'].flatten(),
-                'labels': torch.tensor(label, dtype=torch.float32)
-            }
-            
-            # Add numerical features
-            for key, value in feature_dict.items():
-                if isinstance(value, (int, float)):
-                    item[f'feature_{key}'] = torch.tensor(value, dtype=torch.float32)
-            
-            self.data.append(item)
-    
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        return self.data[idx]
 
+    def __len__(self):
+        return len(self.prompts)
+
+    def __getitem__(self, idx):
+        prompt = self.prompts[idx]
+        response = self.responses[idx]
+        # Concatenate prompt and response for causal LM
+        full_input = prompt + response
+        encoding = self.tokenizer(
+            full_input,
+            truncation=True,
+            padding='max_length',
+            max_length=self.max_length,
+            return_tensors='pt'
+        )
+        # For CausalLM, labels are the same as input_ids (with padding tokens masked)
+        input_ids = encoding['input_ids'].squeeze()
+        attention_mask = encoding['attention_mask'].squeeze()
+        labels = input_ids.clone()
+        labels[labels == self.tokenizer.pad_token_id] = -100  # Mask padding tokens for loss
+        return {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'labels': labels
+        }
 
 class FundingModel:
     """Main model class for funding recommendations"""
@@ -129,18 +122,18 @@ class FundingModel:
                         load_in_8bit=True,
                         bnb_4bit_compute_dtype=torch.float16
                     )
-                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                    self.model = AutoModelForCausalLM.from_pretrained(
                         model_name,
                         num_labels=num_labels,
                         problem_type="multi_label_classification",
                         quantization_config=bnb_config,
-                        device_map="auto",
+                        device_map="cpu",
                         torch_dtype=torch.float16
                     )
                     logger.info(f"Loaded base model with 8-bit quantization: {model_name}")
                 except Exception as quant_error:
                     logger.warning(f"Quantization failed, trying without: {quant_error}")
-                    self.model = AutoModelForSequenceClassification.from_pretrained(
+                    self.model = AutoModelForCausalLM.from_pretrained(
                         model_name,
                         num_labels=num_labels,
                         problem_type="multi_label_classification",
@@ -149,7 +142,7 @@ class FundingModel:
                     )
                     logger.info(f"Loaded base model without quantization: {model_name}")
             else:
-                self.model = AutoModelForSequenceClassification.from_pretrained(
+                self.model = AutoModelForCausalLM.from_pretrained(
                     model_name,
                     num_labels=num_labels,
                     problem_type="multi_label_classification",
@@ -189,46 +182,21 @@ class FundingModel:
             logger.error(f"Error creating PEFT model: {e}")
             raise
     
-    def _prepare_data(self, data_path: str) -> Tuple[List[str], List[Dict], List[List[int]]]:
-        """Prepare training data"""
-        try:
-            # Load preprocessed data
-            with open(data_path, 'r') as f:
-                data = json.load(f)
-            
-            texts = []
-            features = []
-            labels = []
-            
-            for item in data:
-                # Extract text (business description)
-                text = item.get('cleaned_description', '')
-                if not text:
+    def _prepare_data(self, data_path: str):
+        prompts = []
+        responses = []
+        with open(data_path, 'r') as f:
+            for line in f:
+                if not line.strip():
                     continue
-                
-                # Extract features
-                feature_dict = item.get('features', {})
-                
-                # Create labels (simplified - in production, use actual labels)
-                # For demo: create synthetic labels based on features
-                risk_score = self._calculate_risk_score(feature_dict)
-                funding_score = self._calculate_funding_score(feature_dict)
-                
-                # Convert to multi-label format
-                label = [0] * 6  # 3 risk levels + 3 funding levels
-                label[risk_score] = 1
-                label[funding_score + 3] = 1
-                
-                texts.append(text)
-                features.append(feature_dict)
-                labels.append(label)
-            
-            logger.info(f"Prepared {len(texts)} training samples")
-            return texts, features, labels
-            
-        except Exception as e:
-            logger.error(f"Error preparing data: {e}")
-            raise
+                obj = json.loads(line)
+                prompt = obj.get("prompt", "")
+                response = obj.get("response", "")
+                if prompt and response:
+                    prompts.append(prompt)
+                    responses.append(response)
+        print(f"Loaded {len(prompts)} samples")
+        return prompts, responses
     
     def _calculate_risk_score(self, features: Dict) -> int:
         """Calculate risk score based on features (simplified)"""
@@ -265,29 +233,16 @@ class FundingModel:
         else:
             return 1  # No
     
-    def _create_datasets(self, texts: List[str], features: List[Dict], labels: List[List[int]]) -> Tuple[FundingDataset, FundingDataset]:
-        """Create training and validation datasets"""
+    def _create_datasets(self, prompts: List[str], responses: List[str]) -> Tuple[TextGenDataset, TextGenDataset]:
         # Split data
-        train_texts, val_texts, train_features, val_features, train_labels, val_labels = train_test_split(
-            texts, features, labels, 
+        train_prompts, val_prompts, train_responses, val_responses = train_test_split(
+            prompts, responses,
             test_size=self.config['model']['evaluation']['validation_split'],
             random_state=self.config['model']['evaluation']['random_state']
         )
-        
         # Create datasets
-        train_dataset = FundingDataset(
-            train_texts, train_features, train_labels, 
-            self.tokenizer, 
-            self.config['model']['data']['max_length']
-        )
-        
-        val_dataset = FundingDataset(
-            val_texts, val_features, val_labels,
-            self.tokenizer,
-            self.config['model']['data']['max_length']
-        )
-        
-        logger.info(f"Created datasets - Train: {len(train_dataset)}, Val: {len(val_dataset)}")
+        train_dataset = TextGenDataset(train_prompts, train_responses, self.tokenizer, self.config['model']['data']['max_length'])
+        val_dataset = TextGenDataset(val_prompts, val_responses, self.tokenizer, self.config['model']['data']['max_length'])
         return train_dataset, val_dataset
     
     def _compute_metrics(self, eval_pred):
@@ -329,8 +284,8 @@ class FundingModel:
             self._create_peft_model()
             
             # Prepare data
-            texts, features, labels = self._prepare_data(data_path)
-            train_dataset, val_dataset = self._create_datasets(texts, features, labels)
+            prompts, responses = self._prepare_data(data_path)
+            train_dataset, val_dataset = self._create_datasets(prompts, responses)
             
             # Setup training arguments
             learning_rate = self.config['model']['training']['learning_rate']
@@ -354,6 +309,7 @@ class FundingModel:
                 metric_for_best_model='eval_loss',
                 greater_is_better=False,
                 report_to=["wandb"],
+                no_cuda=True,
             )
             
             # Initialize trainer
