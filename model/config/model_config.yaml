@@ -34,7 +34,7 @@ model:
     
   # Data configuration
   data:
-    max_length: 1024
+    max_length: 512
     truncation: true
     padding: "max_length"
     return_tensors: "pt"
