@@ -13,7 +13,6 @@ torch_device = "cpu"
 if torch.cuda.is_available():
     torch_device = "cuda"
 # Force everything to CPU
-torch_device = "cpu"
 import json
 import yaml
 import argparse
