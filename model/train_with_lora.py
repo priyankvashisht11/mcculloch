@@ -12,7 +12,10 @@ import torch
 torch_device = "auto"
 if torch.cuda.is_available():
     torch_device = "cuda"
+<<<<<<< Updated upstream
 # Force everything to CPU
+=======
+>>>>>>> Stashed changes
 import json
 import yaml
 import argparse
