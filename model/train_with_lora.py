@@ -9,7 +9,7 @@ import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import torch
 
-torch_device = "cpu"
+torch_device = "auto"
 if torch.cuda.is_available():
     torch_device = "cuda"
 # Force everything to CPU
