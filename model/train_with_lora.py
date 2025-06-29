@@ -12,10 +12,7 @@ import torch
 torch_device = "auto"
 if torch.cuda.is_available():
     torch_device = "cuda"
-<<<<<<< Updated upstream
 # Force everything to CPU
-=======
->>>>>>> Stashed changes
 import json
 import yaml
 import argparse
@@ -82,12 +79,13 @@ class FundingModel:
     
     def __init__(self, config_path: str = "model/config/model_config.yaml"):
         self.config = self._load_config(config_path)
-        self.device = torch.device("cpu")  # Force CPU
+        # Set device to CUDA if available, else CPU
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
         self.tokenizer = None
         self.model = None
         self.peft_model = None
         
-        logger.info(f"Using device: {self.device}")
         logger.info(f"Loaded configuration from: {config_path}")
     
     def _load_config(self, config_path: str) -> Dict:
@@ -132,6 +130,7 @@ class FundingModel:
                         device_map="cpu",
                         torch_dtype=torch.float16
                     )
+                    self.model = self.model.to(self.device)
                     logger.info(f"Loaded base model with 8-bit quantization: {model_name}")
                 except Exception as quant_error:
                     logger.warning(f"Quantization failed, trying without: {quant_error}")
@@ -142,6 +141,7 @@ class FundingModel:
                         device_map="auto",
                         torch_dtype=torch.float16
                     )
+                    self.model = self.model.to(self.device)
                     logger.info(f"Loaded base model without quantization: {model_name}")
             else:
                 self.model = AutoModelForCausalLM.from_pretrained(
@@ -151,6 +151,7 @@ class FundingModel:
                     device_map={"": "cpu"},
                     torch_dtype=torch.float32
                 )
+                self.model = self.model.to(self.device)
                 logger.info(f"Loaded base model on CPU: {model_name}")
         except Exception as e:
             logger.error(f"Error loading base model: {e}")
@@ -305,13 +306,12 @@ class FundingModel:
                 save_steps=self.config['model']['training']['save_steps'],
                 eval_steps=self.config['model']['training']['eval_steps'],
                 save_total_limit=2,
-                eval_strategy="steps",
+                evaluation_strategy="steps",
                 save_strategy="steps",
                 load_best_model_at_end=True,
                 metric_for_best_model='eval_loss',
                 greater_is_better=False,
                 report_to=["wandb"],
-                no_cuda=True,
             )
             
             # Initialize trainer
