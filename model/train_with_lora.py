@@ -307,7 +307,7 @@ class FundingModel:
                 eval_steps=self.config['model']['training']['eval_steps'],
                 save_total_limit=2,
                 eval_strategy="epoch",
-                save_strategy="steps",
+                save_strategy="epoch",
                 load_best_model_at_end=True,
                 metric_for_best_model='eval_loss',
                 greater_is_better=False,
