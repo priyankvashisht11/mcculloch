@@ -306,7 +306,7 @@ class FundingModel:
                 save_steps=self.config['model']['training']['save_steps'],
                 eval_steps=self.config['model']['training']['eval_steps'],
                 save_total_limit=2,
-                evaluation_strategy="steps",
+                eval_strategy="steps",
                 save_strategy="steps",
                 load_best_model_at_end=True,
                 metric_for_best_model='eval_loss',
