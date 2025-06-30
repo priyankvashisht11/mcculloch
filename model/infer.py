@@ -12,7 +12,7 @@ import numpy as np
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 import yaml
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, LlamaForSequenceClassification, AutoConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from peft import PeftModel, PeftConfig
 from loguru import logger
 import boto3
@@ -52,76 +52,23 @@ class FundingInference:
             raise
     
     def load_model(self):
-        """Load the trained model and tokenizer"""
+        """Load the base model and LoRA adapter for LLM inference"""
         try:
             print("🔍 Starting model loading process...")
-            
-            # Load tokenizer from the LoRA model directory
-            print("📝 Loading tokenizer...")
+            # Load tokenizer from the LoRA adapter directory (for any special tokens)
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, local_files_only=True)
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             print("✅ Tokenizer loaded successfully")
-            
-            # Get HuggingFace token from environment
-            hf_token = os.getenv("HUGGING_FACE_HUB_TOKEN")
-            print(f"🔑 HuggingFace token available: {'Yes' if hf_token else 'No'}")
-            
-            # Try to load base model from HuggingFace first
-            base_model_name = self.config['model']['base_model']
-            print(f"🤖 Loading base model: {base_model_name}")
-            
-            try:
-                # Use token for authentication if available
-                if hf_token:
-                    print("🔐 Using HuggingFace token for authentication...")
-                    self.model = AutoModelForSequenceClassification.from_pretrained(
-                        base_model_name,
-                        num_labels=self.config['model']['classification']['num_labels'],
-                        problem_type="multi_label_classification",
-                        token=hf_token,
-                        trust_remote_code=True
-                    )
-                else:
-                    print("⚠️ No HuggingFace token, trying without authentication...")
-                    self.model = AutoModelForSequenceClassification.from_pretrained(
-                        base_model_name,
-                        num_labels=self.config['model']['classification']['num_labels'],
-                        problem_type="multi_label_classification",
-                        trust_remote_code=True
-                    )
-                
-                print("✅ Base model loaded successfully")
-                
-                # Load LoRA adapter
-                print("🔧 Loading LoRA adapter...")
-                try:
-                    peft_model = PeftModel.from_pretrained(self.model, self.model_path)
-                    self.model = peft_model
-                    self.peft_model = peft_model
-                    print("✅ LoRA adapter loaded successfully")
-                except Exception as e:
-                    print(f"⚠️ Could not load LoRA adapter: {e}")
-                    print("Using base model without LoRA adapter")
-                
-            except Exception as e:
-                print(f"⚠️ Could not load base model from HuggingFace: {e}")
-                print("Using fallback approach...")
-                
-                # Fallback: Create a simple model for testing
-                print("🔄 Creating fallback model...")
-                config = AutoConfig.from_pretrained(
-                    base_model_name,
-                    num_labels=self.config['model']['classification']['num_labels'],
-                    problem_type="multi_label_classification",
-                    token=hf_token if hf_token else None
-                )
-                self.model = AutoModelForSequenceClassification.from_config(config)
-                print("✅ Created fallback model for testing")
-            
+            # Load base model from models/mistral-7b-instruct-v0.2
+            base_model_path = "/app/models/mistral-7b-instruct-v0.2"
+            print(f"🤖 Loading base model from: {base_model_path}")
+            base_model = AutoModelForCausalLM.from_pretrained(base_model_path, local_files_only=True)
+            # Load LoRA adapter and merge
+            print(f"🔧 Loading LoRA adapter from: {self.model_path}")
+            self.model = PeftModel.from_pretrained(base_model, self.model_path, local_files_only=True)
             self.model.eval()
-            print(f"✅ Model loaded successfully on device: {self.device}")
-            
+            print(f"✅ Model with LoRA adapter loaded successfully on device: {self.device}")
         except Exception as e:
             print(f"❌ Error loading model: {e}")
             raise
@@ -195,75 +142,42 @@ class FundingInference:
             logger.error(f"Error preprocessing input: {e}")
             raise
     
+    def build_prompt(self, business_data: Dict[str, Any]) -> str:
+        """Builds a prompt for LLM generation from business data."""
+        # Use the same format as your fine-tuning data
+        instruction = business_data.get('instruction', 'Evaluate the business profile')
+        # Build input string from business_data fields
+        input_lines = []
+        for k, v in business_data.items():
+            if k != 'instruction':
+                input_lines.append(f"{k}: {v}")
+        input_str = "\n".join(input_lines)
+        prompt = f"<s>[INST] {instruction}\n{input_str} [/INST]"
+        return prompt
+
     def predict(self, business_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Make prediction for a business"""
+        """Generate LLM output for a business profile."""
         try:
-            if self.peft_model is None:
-                raise RuntimeError("PEFT model is not loaded. Call load_model() before prediction.")
-            # Preprocess input
-            inputs = self.preprocess_input(business_data)
-            
-            # Make prediction
+            prompt = self.build_prompt(business_data)
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
             with torch.no_grad():
-                outputs = self.peft_model(**inputs)
-                logits = outputs.logits
-                probabilities = torch.sigmoid(logits)
-            
-            # Convert to numpy
-            probs = probabilities.cpu().numpy()[0]
-            
-            # Extract predictions
-            risk_probs = probs[:3]  # First 3 are risk levels
-            funding_probs = probs[3:]  # Last 3 are funding levels
-            
-            # Get predictions
-            risk_prediction = np.argmax(risk_probs)
-            funding_prediction = np.argmax(funding_probs)
-            
-            # Get confidence scores
-            risk_confidence = float(risk_probs[risk_prediction])
-            funding_confidence = float(funding_probs[funding_prediction])
-            
-            # Map to labels
-            risk_labels = self.config['model']['classification']['risk_labels']
-            funding_labels = self.config['model']['classification']['funding_labels']
-            
-            risk_label = risk_labels[risk_prediction]
-            funding_label = funding_labels[funding_prediction]
-            
-            # Calculate overall confidence
-            overall_confidence = (risk_confidence + funding_confidence) / 2
-            
-            # Create result
-            result = {
-                'business_name': business_data.get('business_name', 'Unknown'),
-                'risk_assessment': {
-                    'level': risk_label,
-                    'confidence': risk_confidence,
-                    'probabilities': {
-                        'low': float(risk_probs[0]),
-                        'medium': float(risk_probs[1]),
-                        'high': float(risk_probs[2])
-                    }
-                },
-                'funding_recommendation': {
-                    'decision': funding_label,
-                    'confidence': funding_confidence,
-                    'probabilities': {
-                        'yes': float(funding_probs[0]),
-                        'no': float(funding_probs[1]),
-                        'maybe': float(funding_probs[2])
-                    }
-                },
-                'overall_confidence': overall_confidence,
-                'model_version': self.config['model']['version']
+                output_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.95,
+                    eos_token_id=self.tokenizer.eos_token_id
+                )
+            generated = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            # Remove the prompt from the output to get only the generated answer
+            answer = generated.replace(prompt, "").strip()
+            return {
+                'llm_output': answer,
+                'model_version': self.config.get('model', {}).get('version', 'unknown')
             }
-            
-            logger.info(f"Prediction completed for {result['business_name']}")
-            return result
-            
         except Exception as e:
-            logger.error(f"Error making prediction: {e}")
+            logger.error(f"Error generating LLM output: {e}")
             raise
     
     def predict_batch(self, business_data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -349,24 +263,16 @@ class FundingAnalyzer:
             raise
     
     def analyze_business(self, business_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze a business and provide comprehensive recommendations"""
+        """Analyze a business and provide LLM-based generative analysis"""
         try:
-            # Make prediction
+            # Generate LLM output
             prediction = self.inference.predict(business_data)
-            
-            # Add analysis insights
-            analysis = self._generate_insights(business_data, prediction)
-            
-            # Combine results
             result = {
-                **prediction,
-                'analysis': analysis,
+                'llm_output': prediction['llm_output'],
                 'timestamp': str(pd.Timestamp.now()),
-                'recommendations': self._generate_recommendations(prediction, business_data)
+                'model_version': prediction.get('model_version', 'unknown')
             }
-            
             return result
-            
         except Exception as e:
             logger.error(f"Error analyzing business: {e}")
             raise

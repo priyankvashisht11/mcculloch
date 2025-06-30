@@ -23,16 +23,17 @@ class ElasticsearchSetup:
     """Elasticsearch setup and management class"""
     
     def __init__(self, 
-                 host: str = "localhost", 
-                 port: int = 9200, 
-                 username: str = "elastic", 
-                 password: str = "changeme",
+                 host: str = None, 
+                 port: int = None, 
+                 username: str = None, 
+                 password: str = None,
                  use_ssl: bool = False):
         
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
+        # Use environment variables or sensible defaults for Docker Compose
+        self.host = host or os.getenv("ELASTICSEARCH_HOST", "elasticsearch")
+        self.port = port or int(os.getenv("ELASTICSEARCH_PORT", "9200"))
+        self.username = username or os.getenv("ELASTICSEARCH_USERNAME", "elastic")
+        self.password = password or os.getenv("ELASTICSEARCH_PASSWORD", "changeme")
         self.use_ssl = use_ssl
         
         # Initialize Elasticsearch client
@@ -57,107 +58,24 @@ class ElasticsearchSetup:
         return {
             "mappings": {
                 "properties": {
-                    "business_name": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
-                    "domain": {
-                        "type": "keyword"
-                    },
-                    "industry": {
-                        "type": "keyword"
-                    },
-                    "location": {
-                        "type": "keyword"
-                    },
-                    "description": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
-                    "cleaned_description": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
-                    "embedding": {
-                        "type": "dense_vector",
-                        "dims": 384,  # all-MiniLM-L6-v2 embedding dimension
-                        "index": True,
-                        "similarity": "cosine"
-                    },
-                    "features": {
-                        "properties": {
-                            "revenue": {"type": "float"},
-                            "revenue_log": {"type": "float"},
-                            "employee_count": {"type": "integer"},
-                            "employee_count_log": {"type": "float"},
-                            "years_active": {"type": "float"},
-                            "past_funding": {"type": "float"},
-                            "past_funding_log": {"type": "float"},
-                            "revenue_per_employee": {"type": "float"},
-                            "funding_to_revenue_ratio": {"type": "float"},
-                            "domain_encoded": {"type": "integer"},
-                            "location_encoded": {"type": "integer"},
-                            "text_length": {"type": "integer"},
-                            "word_count": {"type": "integer"},
-                            "sentence_count": {"type": "integer"},
-                            "avg_word_length": {"type": "float"},
-                            "vocabulary_richness": {"type": "float"}
-                        }
-                    },
-                    "entities": {
-                        "properties": {
-                            "ORG": {"type": "keyword"},
-                            "GPE": {"type": "keyword"},
-                            "MONEY": {"type": "keyword"},
-                            "DATE": {"type": "keyword"},
-                            "CARDINAL": {"type": "keyword"},
-                            "PRODUCT": {"type": "keyword"}
-                        }
-                    },
-                    "risk_assessment": {
-                        "properties": {
-                            "level": {"type": "keyword"},
-                            "confidence": {"type": "float"},
-                            "probabilities": {
-                                "properties": {
-                                    "low": {"type": "float"},
-                                    "medium": {"type": "float"},
-                                    "high": {"type": "float"}
-                                }
-                            }
-                        }
-                    },
-                    "funding_recommendation": {
-                        "properties": {
-                            "decision": {"type": "keyword"},
-                            "confidence": {"type": "float"},
-                            "probabilities": {
-                                "properties": {
-                                    "yes": {"type": "float"},
-                                    "no": {"type": "float"},
-                                    "maybe": {"type": "float"}
-                                }
-                            }
-                        }
-                    },
-                    "overall_confidence": {"type": "float"},
+                    "business_name": {"type": "text", "analyzer": "standard"},
+                    "domain": {"type": "keyword"},
+                    "industry": {"type": "keyword"},
+                    "location": {"type": "keyword"},
+                    "description": {"type": "text", "analyzer": "standard"},
+                    "cleaned_description": {"type": "text", "analyzer": "standard"},
+                    "llm_output": {"type": "text", "analyzer": "standard"},
+                    "embedding": {"type": "dense_vector", "dims": 384, "index": True, "similarity": "cosine"},
+                    "features": {"properties": {"revenue": {"type": "float"}, "employee_count": {"type": "integer"}}},
+                    "entities": {"properties": {"ORG": {"type": "keyword"}, "GPE": {"type": "keyword"}}},
                     "timestamp": {"type": "date"},
-                    "metadata": {
-                        "properties": {
-                            "source": {"type": "keyword"},
-                            "version": {"type": "keyword"},
-                            "tags": {"type": "keyword"}
-                        }
-                    }
+                    "metadata": {"properties": {"source": {"type": "keyword"}, "version": {"type": "keyword"}, "tags": {"type": "keyword"}}}
                 }
             },
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
-                "index": {
-                    "knn": True,
-                    "knn.algo_param.ef_search": 100
-                }
+                "index": {"knn": True, "knn.algo_param.ef_search": 100}
             }
         }
     
@@ -266,7 +184,7 @@ class ElasticsearchSetup:
             return 0
     
     def _prepare_document(self, business_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare business data for indexing"""
+        """Prepare business data for indexing (LLM version)"""
         doc = {
             "business_name": business_data.get("business_name", ""),
             "domain": business_data.get("domain", ""),
@@ -274,6 +192,7 @@ class ElasticsearchSetup:
             "location": business_data.get("location", ""),
             "description": business_data.get("description", ""),
             "cleaned_description": business_data.get("cleaned_description", ""),
+            "llm_output": business_data.get("llm_output", ""),
             "features": business_data.get("features", {}),
             "entities": business_data.get("entities", {}),
             "timestamp": business_data.get("timestamp", ""),
@@ -283,21 +202,8 @@ class ElasticsearchSetup:
                 "tags": business_data.get("tags", [])
             }
         }
-        
-        # Add embedding if available
         if "embedding" in business_data:
             doc["embedding"] = business_data["embedding"]
-        
-        # Add prediction results if available
-        if "risk_assessment" in business_data:
-            doc["risk_assessment"] = business_data["risk_assessment"]
-        
-        if "funding_recommendation" in business_data:
-            doc["funding_recommendation"] = business_data["funding_recommendation"]
-        
-        if "overall_confidence" in business_data:
-            doc["overall_confidence"] = business_data["overall_confidence"]
-        
         return doc
     
     def load_data_from_file(self, file_path: str) -> int:

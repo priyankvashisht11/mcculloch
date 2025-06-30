@@ -139,6 +139,16 @@ services:
     profiles:
       - production
 
+  mongo:
+    image: mongo:latest
+    container_name: lcf_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - lcf_network
+
 volumes:
   elasticsearch_data:
     driver: local
@@ -146,6 +156,7 @@ volumes:
     driver: local
   postgres_data:
     driver: local
+  mongo_data:
 
 networks:
   lcf_network:

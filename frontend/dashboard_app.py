@@ -71,7 +71,7 @@ def submit_business_profile(business_data):
         response = requests.post(
             f"{API_BASE_URL}/submit_business_profile",
             json=business_data,
-            timeout=30
+            timeout=180
         )
         if response.status_code == 200:
             return True, response.json()

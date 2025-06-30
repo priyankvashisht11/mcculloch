@@ -21,10 +21,25 @@ import requests
 from pydantic import BaseModel, Field
 import openpyxl
 from docx import Document
+import time
+from pymongo import MongoClient
+from elasticsearch import Elasticsearch, helpers
+from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+ES_HOST = os.getenv("ES_HOST", "localhost")
+ES_PORT = int(os.getenv("ES_PORT", 9200))
+DB_NAME = "lcf_db"
+COLLECTION_NAME = "businesses"
+INDEX_NAME = "lcf_businesses"
+SOURCE_DATA_PATH = "data/preprocessed/sample_businesses.jsonl"
+EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+VECTOR_DIMENSION = 384  # Dimension for all-MiniLM-L6-v2
 
 
 class BusinessProfile(BaseModel):
@@ -310,6 +325,135 @@ class DataIngestion:
         return all_profiles
 
 
+def connect_to_mongo(uri, retries=5, delay=10):
+    """Connect to MongoDB with retries."""
+    for i in range(retries):
+        try:
+            client = MongoClient(uri)
+            client.admin.command('ping')
+            logger.info("Successfully connected to MongoDB.")
+            return client
+        except Exception as e:
+            logger.warning(f"Failed to connect to MongoDB (attempt {i+1}/{retries}): {e}")
+            time.sleep(delay)
+    raise ConnectionError("Could not connect to MongoDB after several retries.")
+
+def connect_to_es(host, port, retries=5, delay=10):
+    """Connect to Elasticsearch with retries."""
+    for i in range(retries):
+        try:
+            es = Elasticsearch([{'host': host, 'port': port, 'scheme': 'http'}])
+            if es.ping():
+                logger.info("Successfully connected to Elasticsearch.")
+                return es
+        except Exception as e:
+            logger.warning(f"Failed to connect to ES (attempt {i+1}/{retries}): {e}")
+        time.sleep(delay)
+    raise ConnectionError("Could not connect to Elasticsearch after several retries.")
+
+def create_es_index(es_client):
+    """Create the Elasticsearch index with a specific mapping."""
+    if es_client.indices.exists(index=INDEX_NAME):
+        logger.info(f"Index '{INDEX_NAME}' already exists. Deleting it.")
+        es_client.indices.delete(index=INDEX_NAME)
+
+    mapping = {
+        "properties": {
+            "business_name": {"type": "text"},
+            "domain": {"type": "keyword"},
+            "location": {"type": "keyword"},
+            "description": {"type": "text"},
+            "revenue": {"type": "double"},
+            "employee_count": {"type": "integer"},
+            "years_active": {"type": "integer"},
+            "description_vector": {
+                "type": "dense_vector",
+                "dims": VECTOR_DIMENSION
+            }
+        }
+    }
+    logger.info(f"Creating index '{INDEX_NAME}' with mapping.")
+    es_client.indices.create(index=INDEX_NAME, mappings=mapping)
+
+def ingest_data_to_mongo(mongo_client, embedding_model):
+    """Read data from file, generate embeddings, and store in MongoDB."""
+    db = mongo_client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    collection.delete_many({})  # Clear existing data
+    
+    logger.info(f"Loading data from '{SOURCE_DATA_PATH}'.")
+    with open(SOURCE_DATA_PATH, "r", encoding="utf-8") as f:
+        data = [json.loads(line) for line in f]
+
+    descriptions = [item.get('input', '') for item in data]
+    
+    logger.info("Generating embeddings for descriptions...")
+    embeddings = embedding_model.generate_embeddings(descriptions)
+    
+    records_to_insert = []
+    for item, embedding in zip(data, embeddings):
+        # This part needs to parse the 'input' string to get structured data
+        # For simplicity, we'll store the raw input and key fields
+        # In a real scenario, you'd parse the key-value pairs from the 'input' string
+        record = {
+            "business_name": item.get("instruction", "Unknown"), # Placeholder
+            "description": item.get("input", ""),
+            "domain": "Unknown", # Placeholder
+            "location": "Unknown", # Placeholder
+            "revenue": 0.0, # Placeholder
+            "employee_count": 0, # Placeholder
+            "years_active": 0, # Placeholder
+            "description_vector": embedding.tolist(),
+            "original_instruction": item.get("instruction"),
+            "original_output": item.get("output")
+        }
+        records_to_insert.append(record)
+
+    logger.info(f"Inserting {len(records_to_insert)} records into MongoDB...")
+    if records_to_insert:
+        collection.insert_many(records_to_insert)
+    logger.info("Data ingestion to MongoDB complete.")
+
+def index_data_to_es(mongo_client, es_client):
+    """Copy data from MongoDB to Elasticsearch for searching."""
+    db = mongo_client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    
+    actions = []
+    logger.info("Reading data from MongoDB to index into Elasticsearch...")
+    for doc in tqdm(collection.find(), total=collection.count_documents({})):
+        action = {
+            "_index": INDEX_NAME,
+            "_id": str(doc["_id"]),
+            "_source": {
+                "business_name": doc.get("business_name"),
+                "domain": doc.get("domain"),
+                "location": doc.get("location"),
+                "description": doc.get("description"),
+                "revenue": doc.get("revenue"),
+                "employee_count": doc.get("employee_count"),
+                "years_active": doc.get("years_active"),
+                "description_vector": doc.get("description_vector")
+            }
+        }
+        actions.append(action)
+
+    logger.info(f"Bulk indexing {len(actions)} documents to Elasticsearch...")
+    helpers.bulk(es_client, actions)
+    logger.info("Data indexing to Elasticsearch complete.")
+
+
+class EmbeddingModel:
+    def __init__(self, model_name=EMBEDDING_MODEL):
+        # Force CPU to avoid sm_120 incompatibility
+        device = 'cpu'
+        logger.info(f"Forcing SentenceTransformer to use device: {device}")
+        self.model = SentenceTransformer(model_name, device=device)
+    
+    def generate_embeddings(self, texts):
+        return self.model.encode(texts, show_progress_bar=True)
+
+
 def main():
     """Example usage of the data ingestion module"""
     # Initialize data ingestion
@@ -332,8 +476,28 @@ def main():
             all_profiles = ingestion.batch_ingest("data/raw", "*.csv")
             ingestion.save_profiles(all_profiles, "batch_processed.json")
             
+        # 1. Connect to services
+        mongo_client = connect_to_mongo(MONGO_URI)
+        es_client = connect_to_es(ES_HOST, ES_PORT)
+        
+        # 2. Initialize embedding model
+        embedding_model = EmbeddingModel()
+        
+        # 3. Ingest data to MongoDB
+        ingest_data_to_mongo(mongo_client, embedding_model)
+        
+        # 4. Create Elasticsearch index and mapping
+        create_es_index(es_client)
+        
+        # 5. Index data from MongoDB to Elasticsearch
+        index_data_to_es(mongo_client, es_client)
+        
+        logger.info("All tasks completed successfully!")
+        
+    except ConnectionError as ce:
+        logger.error(f"A connection error occurred: {ce}")
     except Exception as e:
-        logger.error(f"Error in main ingestion: {e}")
+        logger.error(f"An unexpected error occurred: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

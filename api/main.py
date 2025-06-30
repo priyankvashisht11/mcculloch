@@ -53,14 +53,9 @@ class BusinessProfileRequest(BaseModel):
 class BusinessProfileResponse(BaseModel):
     """Response model for business profile analysis"""
     business_name: str
-    risk_assessment: Dict[str, Any]
-    funding_recommendation: Dict[str, Any]
-    overall_confidence: float
-    analysis: Dict[str, Any]
-    recommendations: List[str]
-    similar_businesses: List[Dict[str, Any]]
+    llm_output: str
     timestamp: str
-    model_version: Dict[str, Any]
+    model_version: str
 
 
 class SearchRequest(BaseModel):
@@ -121,37 +116,18 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize services
         model_path = os.getenv("MODEL_PATH", "models/lora_finetuned")
-        es_host = os.getenv("ELASTICSEARCH_HOST", "localhost")
-        es_port = int(os.getenv("ELASTICSEARCH_PORT", "9200"))
-        es_username = os.getenv("ELASTICSEARCH_USERNAME", "elastic")
-        es_password = os.getenv("ELASTICSEARCH_PASSWORD", "changeme")
-        
         # Initialize funding analyzer
         logger.info("Initializing funding analyzer...")
         funding_analyzer = FundingAnalyzer(model_path)
-        
         # Initialize search service
         logger.info("Initializing search service...")
-        business_search = BusinessSearch(
-            host=es_host,
-            port=es_port,
-            username=es_username,
-            password=es_password
-        )
-        
+        business_search = BusinessSearch()
         # Initialize Elasticsearch setup
         logger.info("Initializing Elasticsearch setup...")
-        es_setup = ElasticsearchSetup(
-            host=es_host,
-            port=es_port,
-            username=es_username,
-            password=es_password
-        )
-        
+        es_setup = ElasticsearchSetup()
         # Initialize preprocessor
         logger.info("Initializing preprocessor...")
         preprocessor = BusinessPreprocessor()
-        
         logger.info("All services initialized successfully!")
         
     except Exception as e:
@@ -224,57 +200,35 @@ async def submit_business_profile(
     """Submit a business profile for funding analysis"""
     try:
         logger.info(f"Processing business profile: {request.business_name}")
-        
-        # Convert request to dict
         business_data = request.dict()
-        
-        # Preprocess business data
+        # Preprocess business data (optional, for indexing/search)
         preprocessed = preproc.preprocess_business(business_data)
-        
-        # Analyze business
+        # Analyze business (LLM output)
         analysis_result = analyzer.analyze_business(business_data)
-        
-        # Find similar businesses
-        similar_businesses = search.find_similar_businesses(
-            business_data, 
-            limit=5,
-            filters={"domain": business_data.get("domain")}
-        )
-        
-        # Index the business in background (optional)
+        # Index the business in background (optional, for search)
         def index_business():
             try:
-                # Add preprocessed data to analysis result
                 indexed_data = {
                     **analysis_result,
                     "embedding": preprocessed.embedding,
                     "cleaned_description": preprocessed.cleaned_description,
                     "entities": preprocessed.entities,
                     "features": preprocessed.features,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": analysis_result["timestamp"]
                 }
                 es.index_business(indexed_data)
             except Exception as e:
                 logger.error(f"Error indexing business: {e}")
-        
         background_tasks.add_task(index_business)
-        
         # Prepare response
         response = BusinessProfileResponse(
-            business_name=analysis_result["business_name"],
-            risk_assessment=analysis_result["risk_assessment"],
-            funding_recommendation=analysis_result["funding_recommendation"],
-            overall_confidence=analysis_result["overall_confidence"],
-            analysis=analysis_result["analysis"],
-            recommendations=analysis_result["recommendations"],
-            similar_businesses=similar_businesses,
+            business_name=business_data["business_name"],
+            llm_output=analysis_result["llm_output"],
             timestamp=analysis_result["timestamp"],
             model_version=analysis_result["model_version"]
         )
-        
         logger.info(f"Successfully analyzed business: {request.business_name}")
         return response
-        
     except Exception as e:
         logger.error(f"Error processing business profile: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing business profile: {str(e)}")

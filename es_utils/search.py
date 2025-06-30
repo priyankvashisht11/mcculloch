@@ -24,33 +24,34 @@ class BusinessSearch:
     """Business search and similarity matching class"""
     
     def __init__(self, 
-                 host: str = "localhost", 
-                 port: int = 9200, 
-                 username: str = "elastic", 
-                 password: str = "changeme",
+                 host: str = None, 
+                 port: int = None, 
+                 username: str = None, 
+                 password: str = None,
                  embedding_model: str = "all-MiniLM-L6-v2"):
         
-        self.host = host
-        self.port = port
-        self.username = username
-        self.password = password
+        # Use environment variables or sensible defaults for Docker Compose
+        self.host = host or os.getenv("ELASTICSEARCH_HOST", "elasticsearch")
+        self.port = port or int(os.getenv("ELASTICSEARCH_PORT", "9200"))
+        self.username = username or os.getenv("ELASTICSEARCH_USERNAME", "elastic")
+        self.password = password or os.getenv("ELASTICSEARCH_PASSWORD", "changeme")
         
         # Initialize Elasticsearch client
         if username and password:
             self.es = Elasticsearch(
-                [f"http://{host}:{port}"],
-                basic_auth=(username, password),
+                [f"http://{self.host}:{self.port}"],
+                basic_auth=(self.username, self.password),
                 verify_certs=False,
                 ssl_show_warn=False
             )
         else:
-            self.es = Elasticsearch([f"http://{host}:{port}"])
+            self.es = Elasticsearch([f"http://{self.host}:{self.port}"])
         
         # Initialize embedding model
         self.embedding_model = SentenceTransformer(embedding_model)
         self.index_name = "lcf_businesses"
         
-        logger.info(f"Initialized BusinessSearch for {host}:{port}")
+        logger.info(f"Initialized BusinessSearch for {self.host}:{self.port}")
     
     def generate_embedding(self, text: str) -> List[float]:
         """Generate embedding for search query"""
@@ -86,8 +87,7 @@ class BusinessSearch:
                 "size": limit,
                 "_source": [
                     "business_name", "domain", "location", "description", 
-                    "features", "risk_assessment", "funding_recommendation",
-                    "overall_confidence", "timestamp"
+                    "llm_output", "features", "timestamp"
                 ]
             }
             
@@ -108,10 +108,8 @@ class BusinessSearch:
                         'domain': hit['_source'].get('domain', ''),
                         'location': hit['_source'].get('location', ''),
                         'description': hit['_source'].get('description', ''),
+                        'llm_output': hit['_source'].get('llm_output', ''),
                         'features': hit['_source'].get('features', {}),
-                        'risk_assessment': hit['_source'].get('risk_assessment', {}),
-                        'funding_recommendation': hit['_source'].get('funding_recommendation', {}),
-                        'overall_confidence': hit['_source'].get('overall_confidence', 0.0),
                         'timestamp': hit['_source'].get('timestamp', '')
                     }
                     results.append(result)
@@ -152,7 +150,7 @@ class BusinessSearch:
                             {
                                 "multi_match": {
                                     "query": query,
-                                    "fields": ["business_name^2", "description", "domain", "location"],
+                                    "fields": ["business_name^2", "description", "llm_output", "domain", "location"],
                                     "type": "best_fields",
                                     "boost": text_weight
                                 }
@@ -163,8 +161,7 @@ class BusinessSearch:
                 "size": limit,
                 "_source": [
                     "business_name", "domain", "location", "description", 
-                    "features", "risk_assessment", "funding_recommendation",
-                    "overall_confidence", "timestamp"
+                    "llm_output", "features", "timestamp"
                 ]
             }
             
@@ -184,10 +181,8 @@ class BusinessSearch:
                     'domain': hit['_source'].get('domain', ''),
                     'location': hit['_source'].get('location', ''),
                     'description': hit['_source'].get('description', ''),
+                    'llm_output': hit['_source'].get('llm_output', ''),
                     'features': hit['_source'].get('features', {}),
-                    'risk_assessment': hit['_source'].get('risk_assessment', {}),
-                    'funding_recommendation': hit['_source'].get('funding_recommendation', {}),
-                    'overall_confidence': hit['_source'].get('overall_confidence', 0.0),
                     'timestamp': hit['_source'].get('timestamp', '')
                 }
                 results.append(result)
@@ -205,13 +200,11 @@ class BusinessSearch:
                               filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Find businesses similar to the given business"""
         try:
-            # Extract description for similarity search
-            description = business_data.get('description', '')
-            if not description:
-                description = f"{business_data.get('business_name', '')} {business_data.get('domain', '')}"
-            
-            # Generate embedding
-            embedding = self.generate_embedding(description)
+            # Use llm_output for similarity search if available, else fallback to description
+            text_for_embedding = business_data.get('llm_output') or business_data.get('description', '')
+            if not text_for_embedding:
+                text_for_embedding = f"{business_data.get('business_name', '')} {business_data.get('domain', '')}"
+            embedding = self.generate_embedding(text_for_embedding)
             if not embedding:
                 return []
             
@@ -235,8 +228,7 @@ class BusinessSearch:
                 "size": limit,
                 "_source": [
                     "business_name", "domain", "location", "description", 
-                    "features", "risk_assessment", "funding_recommendation",
-                    "overall_confidence", "timestamp"
+                    "llm_output", "features", "timestamp"
                 ]
             }
             
@@ -249,18 +241,6 @@ class BusinessSearch:
                 
                 if 'location' in filters:
                     filter_queries.append({"term": {"location": filters['location']}})
-                
-                if 'risk_level' in filters:
-                    filter_queries.append({"term": {"risk_assessment.level": filters['risk_level']}})
-                
-                if 'funding_decision' in filters:
-                    filter_queries.append({"term": {"funding_recommendation.decision": filters['funding_decision']}})
-                
-                if 'min_revenue' in filters:
-                    filter_queries.append({"range": {"features.revenue": {"gte": filters['min_revenue']}}})
-                
-                if 'max_revenue' in filters:
-                    filter_queries.append({"range": {"features.revenue": {"lte": filters['max_revenue']}}})
                 
                 if filter_queries:
                     search_body["query"]["bool"]["filter"] = filter_queries
@@ -281,10 +261,8 @@ class BusinessSearch:
                     'domain': hit['_source'].get('domain', ''),
                     'location': hit['_source'].get('location', ''),
                     'description': hit['_source'].get('description', ''),
+                    'llm_output': hit['_source'].get('llm_output', ''),
                     'features': hit['_source'].get('features', {}),
-                    'risk_assessment': hit['_source'].get('risk_assessment', {}),
-                    'funding_recommendation': hit['_source'].get('funding_recommendation', {}),
-                    'overall_confidence': hit['_source'].get('overall_confidence', 0.0),
                     'timestamp': hit['_source'].get('timestamp', '')
                 }
                 results.append(result)
@@ -311,8 +289,7 @@ class BusinessSearch:
                 "from": offset,
                 "_source": [
                     "business_name", "domain", "location", "description", 
-                    "features", "risk_assessment", "funding_recommendation",
-                    "overall_confidence", "timestamp"
+                    "llm_output", "features", "timestamp"
                 ]
             }
             
@@ -334,7 +311,7 @@ class BusinessSearch:
                         {
                             "multi_match": {
                                 "query": query,
-                                "fields": ["business_name^2", "description", "domain", "location"],
+                                "fields": ["business_name^2", "description", "llm_output", "domain", "location"],
                                 "type": "best_fields"
                             }
                         }
@@ -352,14 +329,6 @@ class BusinessSearch:
                 # Location filter
                 if 'location' in filters and filters['location']:
                     filter_queries.append({"terms": {"location": filters['location'] if isinstance(filters['location'], list) else [filters['location']]}})
-                
-                # Risk level filter
-                if 'risk_level' in filters and filters['risk_level']:
-                    filter_queries.append({"terms": {"risk_assessment.level": filters['risk_level'] if isinstance(filters['risk_level'], list) else [filters['risk_level']]}})
-                
-                # Funding decision filter
-                if 'funding_decision' in filters and filters['funding_decision']:
-                    filter_queries.append({"terms": {"funding_recommendation.decision": filters['funding_decision'] if isinstance(filters['funding_decision'], list) else [filters['funding_decision']]}})
                 
                 # Revenue range filter
                 if 'revenue_min' in filters or 'revenue_max' in filters:
@@ -387,8 +356,6 @@ class BusinessSearch:
                 search_body["sort"] = [{"features.revenue": {"order": "desc"}}]
             elif sort_by == "employee_count":
                 search_body["sort"] = [{"features.employee_count": {"order": "desc"}}]
-            elif sort_by == "confidence":
-                search_body["sort"] = [{"overall_confidence": {"order": "desc"}}]
             elif sort_by == "timestamp":
                 search_body["sort"] = [{"timestamp": {"order": "desc"}}]
             # Default is relevance (score)
@@ -409,10 +376,8 @@ class BusinessSearch:
                     'domain': hit['_source'].get('domain', ''),
                     'location': hit['_source'].get('location', ''),
                     'description': hit['_source'].get('description', ''),
+                    'llm_output': hit['_source'].get('llm_output', ''),
                     'features': hit['_source'].get('features', {}),
-                    'risk_assessment': hit['_source'].get('risk_assessment', {}),
-                    'funding_recommendation': hit['_source'].get('funding_recommendation', {}),
-                    'overall_confidence': hit['_source'].get('overall_confidence', 0.0),
                     'timestamp': hit['_source'].get('timestamp', '')
                 }
                 results.append(result)
@@ -541,7 +506,6 @@ def main():
         print("\n=== Advanced Search ===")
         filters = {
             'domain': 'Technology',
-            'risk_level': 'medium',
             'revenue_min': 100000
         }
         results = search.advanced_search(

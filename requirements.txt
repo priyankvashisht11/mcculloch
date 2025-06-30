@@ -64,4 +64,5 @@ ipykernel>=6.25.0
 
 # Add wandb for experiment tracking
 wandb
-llama_stack==0.2.11 
+llama_stack==0.2.11
+pymongo 
