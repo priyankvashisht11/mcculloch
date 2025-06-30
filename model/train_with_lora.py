@@ -42,7 +42,7 @@ logger.add("logs/training.log", rotation="10 MB", level="INFO")
 print("TrainingArguments source:", TrainingArguments.__module__)
 
 class TextGenDataset(torch.utils.data.Dataset):
-    def __init__(self, prompts, responses, tokenizer, max_length=1024):
+    def __init__(self, prompts, responses, tokenizer, max_length=512):
         self.prompts = prompts
         self.responses = responses
         self.tokenizer = tokenizer
